@@ -1,16 +1,56 @@
+// Package dependencies
 var express       = require('express');
 var bodyParser    = require('body-parser');
-var request       = require('request');
 var dotenv        = require('dotenv');
-var SpotifyWebApi = require('spotify-web-api-node');
+var spotifyWebApi = require('spotify-web-api-node');
+
+// Node dependencies
+var fs            = require('fs');
 
 dotenv.load();
 
-var spotifyApi = new SpotifyWebApi({
+var spotify = new spotifyWebApi({
   clientId     : process.env.SPOTIFY_KEY,
   clientSecret : process.env.SPOTIFY_SECRET,
   redirectUri  : process.env.SPOTIFY_REDIRECT_URI
 });
+
+var slack = require('slack-notify')(process.env.SLACK_URL);
+
+var playlistFetcherActive = false;
+
+var fetchPlaylist = function() {
+  var lastDate = new Date(fs.readFileSync('./last_date.txt').toString() );
+
+  var updateLastDate = function(date) {
+    fs.writeFile("./last_date.txt", date, function() {});
+  };
+
+  return function() {
+    if (!playlistFetcherActive) { return; }
+
+    console.log("Last fetched at:", lastDate);
+    spotifyApi.getPlaylist(spotifyUser, spotifyPlaylistId, {fields: 'tracks.items(added_by.id,added_at,track(name,artists.name,album.name)),name,external_urls.spotify'})
+      .then(function(data) {
+        for (var i in data.tracks.items) {
+          var playlistEntry = data.tracks.items[i];
+          var date = new Date(playlistEntry.added_at);
+          if((lastDate === undefined) || (date > lastDate)) {
+            post(data.name, 
+              data.external_urls.spotify, 
+              playlistEntry.added_by ? playlistEntry.added_by.id : "Unknown",
+              playlistEntry.track.name,
+              playlistEntry.track.artists);
+            lastDate = new Date(playlistEntry.added_at);
+            updateLastDate(lastDate);
+          }
+        }
+      }, function(err) {
+        console.log('Something went wrong! ', err);
+      });
+  };
+};
+
 
 var app = express();
 app.use(bodyParser.json());
@@ -19,8 +59,9 @@ app.use(bodyParser.urlencoded({
 }));
 
 app.get('/', function(req, res) {
-  if (spotifyApi.getAccessToken()) {
-    return res.send('You are logged in.');
+  if (spotify.getAccessToken()) {
+    playlistFetcherActive = true;
+    return res.send('You are logged in to Spotify.');
   }
   return res.send('<a href="/authorise">Authorise</a>');
 });
@@ -28,15 +69,15 @@ app.get('/', function(req, res) {
 app.get('/authorise', function(req, res) {
   var scopes = ['playlist-modify-public', 'playlist-modify-private'];
   var state  = new Date().getTime();
-  var authoriseURL = spotifyApi.createAuthorizeURL(scopes, state);
+  var authoriseURL = spotify.createAuthorizeURL(scopes, state);
   res.redirect(authoriseURL);
 });
 
 app.get('/callback', function(req, res) {
-  spotifyApi.authorizationCodeGrant(req.query.code)
+  spotify.authorizationCodeGrant(req.query.code)
     .then(function(data) {
-      spotifyApi.setAccessToken(data.body['access_token']);
-      spotifyApi.setRefreshToken(data.body['refresh_token']);
+      spotify.setAccessToken(data.body['access_token']);
+      spotify.setRefreshToken(data.body['refresh_token']);
       return res.redirect('/');
     }, function(err) {
       return res.send(err);
@@ -45,26 +86,24 @@ app.get('/callback', function(req, res) {
 
 app.use('/store', function(req, res, next) {
   if (req.body.token !== process.env.SLACK_TOKEN) {
-    return res.status(500).send('Cross site request forgerizzle!');
+    return res.status(400).send('Missing token');
   }
   next();
 });
 
 app.post('/store', function(req, res) {
-  spotifyApi.refreshAccessToken()
+  spotify.refreshAccessToken()
     .then(function(data) {
-      spotifyApi.searchTracks(req.body.text)
+      spotify.searchTracks(req.body.text)
         .then(function(data) {
           var results = data.body.tracks.items;
           if (results.length === 0) {
-            return res.send('Could not find that track. Maybe try adding the artist?');
+            return res.send('Could not find that track. Maybe try adding the artist or iusing a more specific search phrase?');
           }
           var track = results[0];
           var trackId = track.id;
-          spotifyApi.addTracksToPlaylist(process.env.SPOTIFY_USERNAME, process.env.SPOTIFY_PLAYLIST_ID, ['spotify:track:' + trackId])
+          spotify.addTracksToPlaylist(process.env.SPOTIFY_USERNAME, process.env.SPOTIFY_PLAYLIST_ID, ['spotify:track:' + trackId])
             .then(function(data) {
-              console.log("track.artists=" + track.artists);
-              console.log("track.artists.length=" + track.artists.length);
               var artistNames = [];
               for (var i in track.artists) {
                 artistNames.push(track.artists[i].name);

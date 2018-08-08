@@ -1,5 +1,5 @@
 {
-  "name": "mikehatfield-threepeaks-spotify",
+  "name": "threepeaks-spotify",
   "version": "0.1.0",
   "description": "Spotify playlist collaboration through Slack.",
   "main": "app.js",
@@ -15,11 +15,11 @@
   "license": "MIT",
   "devDependencies": {},
   "dependencies": {
-    "spotify-web-api-node": "~2.0.1",
-    "dotenv": "~1.0.0",
-    "express": "~4.12.3",
-    "request": "~2.53.0",
-    "body-parser": "~1.12.2"
+    "express": "4.12.4",
+    "body-parser": "1.12.4",
+    "dotenv": "1.0.0",
+    "spotify-web-api-node": "2.0.2",
+    "slack-notify": "0.1.4"
   },
   "engines": {
     "node": "0.10.x"
